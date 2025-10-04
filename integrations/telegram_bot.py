@@ -61,20 +61,29 @@ class CryptoTelegramBot:
             '永续交易员': 'trader_decision'
         }
         
-        # 支持的币种（从配置中获取）
-        if hasattr(crypto_monitor, 'settings') and hasattr(crypto_monitor.settings, 'monitor'):
-            primary_symbols = getattr(crypto_monitor.settings.monitor, 'primary_symbols', []) or []
-            secondary_symbols = getattr(crypto_monitor.settings.monitor, 'secondary_symbols', []) or []
-            self.supported_symbols = primary_symbols + secondary_symbols
-        else:
-            # 默认支持的币种
-            self.supported_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT']
+        # 动态币种列表 - 初始为空，从controller的symbol_monitors和配置中动态获取
+        self.supported_symbols = self._get_monitored_symbols()
         
         # 交易确认状态管理
         self.pending_trades = {}  # 存储待确认的交易
         
         # 事件循环管理
         self.main_loop = None
+
+    def _get_monitored_symbols(self):
+        """动态获取正在监控的币种列表"""
+        monitored = []
+
+        if hasattr(self.crypto_monitor, 'symbol_monitors'):
+            monitored.extend(list(self.crypto_monitor.symbol_monitors.keys()))
+
+        if hasattr(self.crypto_monitor, 'settings') and hasattr(self.crypto_monitor.settings, 'monitor'):
+            primary_symbols = getattr(self.crypto_monitor.settings.monitor, 'primary_symbols', []) or []
+            secondary_symbols = getattr(self.crypto_monitor.settings.monitor, 'secondary_symbols', []) or []
+            monitored.extend(primary_symbols)
+            monitored.extend(secondary_symbols)
+
+        return list(set(monitored))
 
     def _schedule_async_task(self, coro):
         """安全地调度异步任务到主事件循环"""

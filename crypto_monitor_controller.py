@@ -11,9 +11,10 @@ from pathlib import Path
 from config import ConfigManager, Settings
 from database import DatabaseManager
 from core import IndicatorCalculator, MasterBrain
-from trading import PortfolioManager
+from analysis import TraderAnalyst
+from trading import TradingClient
 from integrations import TelegramIntegration
-from services import AnalysisService, DataService, FormattingService, MonitoringService
+from services import AnalysisService, DataService, FormattingService, MonitoringService, SchedulerService
 
 
 class CryptoMonitorController:
@@ -71,11 +72,18 @@ class CryptoMonitorController:
         
         # LLM客户端
         self.llm_clients = self._initialize_llm_clients()
-        
-        # 交易管理器
-        self.portfolio_manager = PortfolioManager(self.settings, self.db_manager, self.llm_clients)
-        print("✅ 交易管理器初始化完成")
-        
+
+        # 交易客户端
+        self.trading_client = TradingClient(self.settings)
+        print("✅ 交易客户端初始化完成")
+
+        # 交易员分析师
+        trader_llm = self._get_llm_client_for_analyst('永续交易员')
+        self.trader_analyst = TraderAnalyst(
+            self.settings, trader_llm, self.trading_client, self.db_manager
+        )
+        print("✅ 交易员分析师初始化完成")
+
         # Telegram集成
         self.telegram_integration = TelegramIntegration(self.settings)
         print("✅ Telegram集成初始化完成")
@@ -102,20 +110,27 @@ class CryptoMonitorController:
         
         # 监控服务（需要主脑实例）
         self.monitoring_service = MonitoringService(
-            self.settings, self.db_manager, self.data_service, 
+            self.settings, self.db_manager, self.data_service,
             self.indicator_calculator, self.master_brain
         )
         print("✅ 监控服务初始化完成")
+
+        # 定时任务调度服务
+        self.scheduler_service = SchedulerService(self.settings)
+        print("✅ 定时任务调度服务初始化完成")
     
     def _setup_service_coordination(self):
         """设置服务间的协调关系"""
         # 设置监控服务的分析触发回调
         self.monitoring_service.set_analysis_callback(self._on_analysis_triggered)
+
+        # 设置定时任务的分析回调
+        self.scheduler_service.set_analysis_callback(self._run_scheduled_base_analysis)
     
     def _on_analysis_triggered(self, symbol: str, reason: str, market_conditions: Dict[str, Any]):
         """
         当监控服务触发分析时的回调处理
-        
+
         Args:
             symbol: 币种符号
             reason: 触发原因
@@ -123,6 +138,85 @@ class CryptoMonitorController:
         """
         # 这里可以添加额外的分析触发逻辑，比如发送通知等
         print(f"📊 分析已触发: {symbol} - {reason}")
+
+    def _analyze_macro(self):
+        """执行宏观分析任务"""
+        try:
+            print("📊 执行宏观分析...")
+            macro_analysis = self.analysis_service.analyze_macro_data()
+            self.analysis_service._save_analysis_record('宏观分析师', None, macro_analysis, '定时宏观分析')
+            print("✅ 宏观分析完成")
+        except Exception as e:
+            print(f"❌ 宏观分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _analyze_market_sentiment_task(self):
+        """执行市场情绪分析任务"""
+        try:
+            print("🔥 执行市场情绪分析...")
+            global_data = self.data_service.collect_global_market_data() or {}
+            trending_data = self.data_service.collect_trending_data() or []
+            sentiment_analysis = self.analysis_service.market_analyst.analyze_market_sentiment(global_data, trending_data)
+            self.analysis_service._save_analysis_record('市场分析师', None, sentiment_analysis, '定时市场情绪分析')
+            print("✅ 市场情绪分析完成")
+        except Exception as e:
+            print(f"❌ 市场情绪分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _analyze_fundamentals(self):
+        """执行主要币种基本面分析任务"""
+        try:
+            print("📈 执行主要币种基本面分析...")
+            primary_symbols = self.settings.monitor.primary_symbols or []
+
+            if not primary_symbols:
+                print("  ℹ️ 未设置监控币种，跳过基本面分析")
+            else:
+                for symbol in primary_symbols:
+                    try:
+                        print(f"  - 分析 {symbol} 基本面...")
+                        fundamental_analysis = self.analysis_service.fundamental_analyst.analyze_fundamental_data(
+                            symbol, self.data_service.data_collector
+                        )
+                        self.analysis_service._save_analysis_record(
+                            '基本面分析师', symbol, fundamental_analysis, f'定时{symbol}基本面分析'
+                        )
+                        print(f"  ✅ {symbol} 基本面分析完成")
+                    except Exception as e:
+                        print(f"  ❌ {symbol} 基本面分析失败: {e}")
+            print("✅ 基本面分析完成")
+        except Exception as e:
+            print(f"❌ 基本面分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _run_scheduled_base_analysis(self):
+        """
+        定时执行基础分析 - 宏观+市场+基本面（并行执行）
+        每天启动时、23:00、4:00 执行
+        """
+        import concurrent.futures
+
+        try:
+            print("🌍 执行定时基础分析: 宏观+市场+基本面（并行）")
+
+            # 使用线程池并行执行三个分析任务
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                future_macro = executor.submit(self._analyze_macro)
+                future_market = executor.submit(self._analyze_market_sentiment_task)
+                future_fundamental = executor.submit(self._analyze_fundamentals)
+
+                # 等待所有任务完成
+                concurrent.futures.wait([future_macro, future_market, future_fundamental])
+
+            print("✅ 定时基础分析全部完成")
+
+        except Exception as e:
+            print(f"❌ 定时基础分析失败: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _load_environment_variables(self):
         """加载环境变量"""
@@ -197,13 +291,14 @@ class CryptoMonitorController:
             '基本面分析师': self.settings.api.fundamental_analyst,
             '宏观分析师': self.settings.api.macro_analyst,
             '首席分析师': self.settings.api.chief_analyst,
-            '研究部门总监': self.settings.api.research_director
+            '研究部门总监': self.settings.api.research_director,
+            '永续交易员': self.settings.api.perpetual_trader
         }
-        
+
         config = config_map.get(analyst_name)
         if not config:
             return self.llm_clients.get('doubao')
-        
+
         return self.llm_clients.get(config.provider, self.llm_clients.get('doubao'))
     
     # ============= 监控系统控制接口 =============
@@ -213,6 +308,9 @@ class CryptoMonitorController:
         success = self.monitoring_service.start_monitoring()
         if success:
             self._start_telegram_bot()
+
+        # 启动定时任务调度器
+        self.scheduler_service.start_scheduler()
     
     def stop_monitoring(self):
         """停止监控系统"""
@@ -233,19 +331,23 @@ class CryptoMonitorController:
     def ask_claude_with_data(self, question: str, symbols=None) -> str:
         """
         多分析师协作分析
-        
+
         Args:
             question: 分析问题
             symbols: 要分析的币种列表
-            
+
         Returns:
             str: 分析结果
         """
         if symbols is None:
-            symbols = self.settings.monitor.primary_symbols
+            symbols = self.settings.monitor.primary_symbols or []
+
+        if not symbols:
+            return "请指定要分析的币种，例如: BTCUSDT, ETHUSDT"
+
         elif isinstance(symbols, str):
             symbols = [symbols]
-        
+
         print(f"🏛️ 启动多分析师协作分析")
         print(f"📊 分析币种: {', '.join([s.replace('USDT', '') for s in symbols])}")
         print("="*80)
@@ -264,7 +366,7 @@ class CryptoMonitorController:
         analysis_results['research_summary'] = research_summary
         
         # 进行交易分析
-        trading_analysis = self.portfolio_manager.conduct_trading_analysis(analysis_results, question)
+        trading_analysis = self.trader_analyst.conduct_trading_analysis(analysis_results, question)
         
         # 组合最终输出
         final_output = f"{research_summary}\n\n{'-'*80}\n\n{trading_analysis}"
@@ -413,20 +515,20 @@ class CryptoMonitorController:
 
     def get_account_info(self) -> Dict[str, Any]:
         """获取交易账户信息"""
-        return self.portfolio_manager.get_account_info()
+        return self.trader_analyst.get_account_info()
 
     def get_account_balance(self) -> Dict[str, Any]:
         """获取账户余额"""
-        return self.portfolio_manager.trading_client.get_account_balance()
+        return self.trading_client.get_account_balance()
 
     def get_current_positions(self) -> Dict[str, Any]:
         """获取当前持仓"""
-        return self.portfolio_manager.trading_client.get_current_positions()
+        return self.trading_client.get_current_positions()
 
     def execute_trade(self, symbol: str, side: str, quantity: float,
                      order_type: str = "MARKET", price: Optional[float] = None) -> Dict[str, Any]:
         """执行交易"""
-        return self.portfolio_manager.execute_trade(symbol, side, quantity, order_type, price)
+        return self.trader_analyst.execute_trade(symbol, side, quantity, order_type, price)
     
     # ============= 系统状态接口 =============
     
@@ -439,7 +541,7 @@ class CryptoMonitorController:
 
             # 安全获取交易信息
             try:
-                trading_info = self.portfolio_manager.get_account_info()
+                trading_info = self.trader_analyst.get_account_info()
             except Exception as trade_error:
                 trading_info = {'error': f"交易信息获取失败: {trade_error}"}
 
@@ -623,7 +725,7 @@ class CryptoMonitorController:
 
             # 调用交易员分析
             question = f"请基于技术分析为 {symbol} 提供交易决策建议"
-            trading_analysis = self.portfolio_manager.conduct_trading_analysis(research_results, question)
+            trading_analysis = self.trader_analyst.conduct_trading_analysis(research_results, question)
 
             return trading_analysis
 
@@ -657,7 +759,7 @@ class CryptoMonitorController:
         """获取交易设置"""
         return {
             'auto_trading_enabled': self.auto_trading_enabled,
-            'trading_available': self.portfolio_manager.trading_client.is_available()
+            'trading_available': self.trading_client.is_available()
         }
 
     # ============= 智能主脑接口 =============

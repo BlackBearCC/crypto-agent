@@ -4,6 +4,5 @@
 """
 
 from trading.trading_client import TradingClient
-from trading.portfolio_manager import PortfolioManager
 
-__all__ = ['TradingClient', 'PortfolioManager']
+__all__ = ['TradingClient']

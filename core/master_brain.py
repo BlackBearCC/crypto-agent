@@ -41,12 +41,32 @@ class MasterBrain:
 - **待机状态**: 系统已启动但不主动分析
 - **Telegram控制**: 所有分析和交易通过Telegram用户命令触发
 - **按需响应**: 只在收到明确指令时才执行相应操作
+- **动态监控**: 系统不再有默认监控币种，完全根据用户输入动态添加和移除
+
+## 自然语言理解能力
+你需要理解用户的各种表达方式并转换为标准交易对格式：
+
+**币种识别**：
+- 比特币/BTC/大饼/饼 → BTCUSDT
+- 以太坊/ETH/姨太/以太 → ETHUSDT
+- 狗狗币/DOGE/狗币 → DOGEUSDT
+- 索拉纳/SOL/所拉那 → SOLUSDT
+- 其他币种同理，统一转换为 {币种代码}USDT 格式
+
+**指令理解**：
+- "分析"/"看看"/"怎么样" 默认指 → 技术分析 (technical_analysis)
+- "全面分析"/"综合分析" → 多分析师协作分析 (comprehensive_analysis)
+- "市场情绪"/"市场怎么样" → 市场情绪分析 (market_sentiment_analysis)
+- "基本面"/"项目分析" → 基本面分析 (fundamental_analysis)
+- "宏观"/"大环境" → 宏观分析 (macro_analysis)
+- "监控"/"开始监控"/"盯着" → 开始币种监控 (start_symbol_monitor)
+- "停止监控"/"别盯了" → 停止币种监控 (stop_symbol_monitor)
 
 ## 你的核心能力
 通过function calling调用以下能力（仅在用户请求时）：
 
 ### 分析能力
-1. **technical_analysis** - 技术分析师：分析K线数据、技术指标
+1. **technical_analysis** - 技术分析师：分析K线数据、技术指标（默认分析类型）
 2. **market_sentiment_analysis** - 市场分析师：分析市场情绪、热点趋势
 3. **fundamental_analysis** - 基本面分析师：分析币种基本面数据
 4. **macro_analysis** - 宏观分析师：分析宏观经济环境（每日限一次）
@@ -62,9 +82,14 @@ class MasterBrain:
 10. **get_market_data** - 获取实时市场数据
 11. **get_system_status** - 获取系统运行状态
 12. **manual_trigger_analysis** - 手动触发特定币种分析
+13. **start_symbol_monitor** - 开始监控指定币种（定时分析）
+14. **stop_symbol_monitor** - 停止监控指定币种
+15. **get_symbol_monitors_status** - 获取所有监控币种状态
+16. **set_monitoring_symbols** - 设置监控币种列表
+17. **get_monitoring_symbols** - 获取当前监控币种列表
 
 ### 通知能力
-13. **send_telegram_notification** - 发送Telegram通知
+18. **send_telegram_notification** - 发送Telegram通知
 
 ## 工作原则
 1. **按需服务**：只在收到用户明确请求时执行操作
@@ -72,6 +97,7 @@ class MasterBrain:
 3. **风险优先**：任何交易决策都要优先考虑风险控制
 4. **透明执行**：清晰说明你的思考过程和调用的能力
 5. **资源优化**：宏观分析每日限一次，避免重复调用
+6. **动态监控**：用户可以随时添加或移除监控币种
 
 ## 响应格式
 - 首先说明你的理解和计划
@@ -83,39 +109,26 @@ class MasterBrain:
     def process_request(self, request: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
         处理用户请求或心跳事件
-        
+
         Args:
             request: 用户请求或系统事件描述
             context: 附加上下文信息
-            
+
         Returns:
             主脑的响应和处理结果
         """
         try:
             # 准备上下文信息
             context_info = self._prepare_context(context or {})
-            
-            # 构造完整prompt
-            full_prompt = f"""
-{self.get_master_brain_prompt()}
 
-## 当前上下文
-{context_info}
-
-## 用户请求/系统事件
-{request}
-
-请智能分析并执行相应操作。
-"""
-            
             # 准备function definitions
             functions = self._get_function_definitions()
-            
-            # 调用LLM with function calling
-            response = self._call_llm_with_functions(full_prompt, functions)
-            
+
+            # 调用LLM with function calling - 分离系统提示词和用户消息
+            response = self._call_llm_with_functions(request, context_info, functions)
+
             return response
-            
+
         except Exception as e:
             error_msg = f"❌ 主脑处理请求失败: {e}"
             print(error_msg)
@@ -143,15 +156,18 @@ class MasterBrain:
     
     def _prepare_context(self, context: Dict[str, Any]) -> str:
         """准备上下文信息"""
+        primary_symbols = self.settings.monitor.primary_symbols or []
+        monitored_symbols = "无(等待用户添加)" if not primary_symbols else ', '.join([s.replace('USDT', '') for s in primary_symbols])
+
         context_lines = [
             f"系统时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"监控币种: {', '.join([s.replace('USDT', '') for s in self.settings.monitor.primary_symbols])}",
+            f"监控币种: {monitored_symbols}",
             f"系统模式: {self.settings.system.mode}"
         ]
-        
+
         if context:
             context_lines.extend([f"{k}: {v}" for k, v in context.items()])
-        
+
         return '\n'.join(context_lines)
     
     def _get_function_definitions(self) -> List[Dict[str, Any]]:
@@ -303,23 +319,47 @@ class MasterBrain:
                 "name": "get_heartbeat_settings",
                 "description": "获取当前心跳设置",
                 "parameters": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "start_symbol_monitor",
+                "description": "开始监控指定币种，定时执行技术分析",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {"type": "string", "description": "交易对，如BTCUSDT"},
+                        "interval_minutes": {"type": "number", "description": "监控间隔（分钟），默认30分钟"}
+                    },
+                    "required": ["symbol"]
+                }
+            },
+            {
+                "name": "stop_symbol_monitor",
+                "description": "停止监控指定币种",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {"type": "string", "description": "交易对，如BTCUSDT"}
+                    },
+                    "required": ["symbol"]
+                }
+            },
+            {
+                "name": "get_symbol_monitors_status",
+                "description": "获取所有币种监控状态",
+                "parameters": {"type": "object", "properties": {}}
             }
         ]
     
-    def _call_llm_with_functions(self, prompt: str, functions: List[Dict[str, Any]]) -> str:
-        """调用LLM with function calling"""
+    def _call_llm_with_functions(self, user_request: str, context_info: str, functions: List[Dict[str, Any]]) -> str:
+        """调用LLM with function calling - 分离系统提示词和用户消息"""
         if not self.llm_client:
             print("❌ 主脑: LLM客户端未初始化")
             return "❌ LLM客户端未初始化"
-        
+
         try:
-            print(f"🧠 主脑准备调用LLM，提示词长度: {len(prompt)} 字符")
-            # 不同的LLM客户端可能有不同的function calling接口
-            # 这里先用简单的方式实现，后续可以扩展
-            
-            # 构造带function信息的prompt - 简化版本
+            # 构造系统提示词（包含主脑能力说明和function列表）
             function_list = "\n".join([f"- {f['name']}: {f['description']}" for f in functions])
-            enhanced_prompt = f"""{prompt}
+            system_prompt = f"""{self.get_master_brain_prompt()}
 
 可用的函数调用:
 {function_list}
@@ -327,18 +367,35 @@ class MasterBrain:
 如果需要调用函数，请用以下格式：
 FUNCTION_CALL: function_name(param1=value1, param2=value2)
 
-注意：字符串参数要用引号，数组参数用方括号。
-"""
-            
-            response = self.llm_client.call(enhanced_prompt)
+注意：字符串参数要用引号，数组参数用方括号。"""
+
+            # 构造用户消息（包含上下文和请求）
+            user_message = f"""## 当前上下文
+{context_info}
+
+## 用户请求
+{user_request}
+
+请智能分析并执行相应操作。"""
+
+            print(f"🧠 主脑准备调用LLM")
+            print(f"  - 系统提示词长度: {len(system_prompt)} 字符")
+            print(f"  - 用户消息长度: {len(user_message)} 字符")
+
+            # 使用分离的system_prompt和user_message调用LLM
+            response = self.llm_client.call(
+                system_prompt_or_full_prompt=system_prompt,
+                user_message=user_message,
+                agent_name='智能主脑'
+            )
             print(f"🧠 LLM原始响应长度: {len(response)} 字符")
-            
+
             # 解析是否包含function call
             processed_response = self._process_function_calls(response)
             print(f"🧠 处理后响应长度: {len(processed_response)} 字符")
-            
+
             return processed_response
-            
+
         except Exception as e:
             return f"❌ LLM调用失败: {e}"
     
@@ -437,6 +494,21 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
             
             elif 'get_heartbeat_settings(' in func_call:
                 return json.dumps(self.controller.get_heartbeat_settings(), ensure_ascii=False, indent=2)
+
+            elif 'start_symbol_monitor(' in func_call:
+                symbol = self._extract_param(func_call, 'symbol')
+                interval_minutes = self._extract_param(func_call, 'interval_minutes')
+                interval = int(interval_minutes) if interval_minutes else 30
+                result = self.controller.start_symbol_monitor(symbol, interval)
+                return result['message']
+
+            elif 'stop_symbol_monitor(' in func_call:
+                symbol = self._extract_param(func_call, 'symbol')
+                result = self.controller.stop_symbol_monitor(symbol)
+                return result['message']
+
+            elif 'get_symbol_monitors_status(' in func_call:
+                return json.dumps(self.controller.get_symbol_monitors_status(), ensure_ascii=False, indent=2)
             
             else:
                 return f"❌ 未知的函数调用: {func_call}"
