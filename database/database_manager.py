@@ -39,8 +39,7 @@ class DatabaseManager:
         """初始化数据库表结构"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            
-            # 创建市场数据表
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS market_data (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,8 +56,7 @@ class DatabaseManager:
                     UNIQUE(symbol, timestamp)
                 )
             ''')
-            
-            # 创建分析记录表
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS analysis_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,8 +70,7 @@ class DatabaseManager:
                     metadata TEXT
                 )
             ''')
-            
-            # 创建触发事件表
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trigger_events (
                     id TEXT PRIMARY KEY,
@@ -84,12 +81,26 @@ class DatabaseManager:
                     status TEXT DEFAULT 'pending'
                 )
             ''')
-            
-            # 创建索引
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    round_number INTEGER NOT NULL,
+                    is_summary INTEGER DEFAULT 0,
+                    archived INTEGER DEFAULT 0,
+                    metadata TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_market_data_symbol_time ON market_data(symbol, timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_analysis_records_type_time ON analysis_records(data_type, timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_events_symbol_type ON trigger_events(symbol, event_type)')
-            
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_round ON chat_messages(chat_id, round_number)')
+
             conn.commit()
     
     def save_market_data(self, data: MarketData) -> bool:
@@ -411,5 +422,111 @@ class DatabaseManager:
                 
         except Exception as e:
             print(f"❌ 获取数据库统计信息失败: {e}")
-        
+
         return stats
+
+    def get_chat_history(self, chat_id: str, limit: int = 10) -> List[Any]:
+        """获取聊天历史（最新的N条未归档消息）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, chat_id, role, content, round_number, is_summary, archived, metadata, created_at
+                    FROM chat_messages
+                    WHERE chat_id = ? AND archived = 0
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ''', (chat_id, limit))
+                rows = cursor.fetchall()
+
+                from database.models import ChatMessage
+                messages = []
+                for row in reversed(rows):
+                    msg = ChatMessage(
+                        id=row[0], chat_id=row[1], role=row[2], content=row[3],
+                        round_number=row[4], is_summary=bool(row[5]),
+                        archived=bool(row[6]), created_at=row[8]
+                    )
+                    messages.append(msg)
+                return messages
+        except Exception as e:
+            print(f"Get chat history error: {e}")
+            return []
+
+    def save_chat_message(self, chat_id: str, role: str, content: str,
+                         round_number: int, is_summary: bool = False,
+                         metadata: Optional[Dict] = None) -> bool:
+        """保存聊天消息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                metadata_json = json.dumps(metadata) if metadata else None
+                cursor.execute('''
+                    INSERT INTO chat_messages
+                    (chat_id, role, content, round_number, is_summary, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (chat_id, role, content, round_number, 1 if is_summary else 0, metadata_json))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Save chat message error: {e}")
+            return False
+
+    def get_chat_round_count(self, chat_id: str) -> int:
+        """获取当前对话轮数"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT MAX(round_number)
+                    FROM chat_messages
+                    WHERE chat_id = ? AND archived = 0
+                ''', (chat_id,))
+                result = cursor.fetchone()[0]
+                return result or 0
+        except Exception as e:
+            print(f"Get chat round count error: {e}")
+            return 0
+
+    def get_chat_messages_by_rounds(self, chat_id: str, round_start: int, round_end: int) -> List[Any]:
+        """获取指定轮次范围的消息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, chat_id, role, content, round_number, is_summary, archived, metadata, created_at
+                    FROM chat_messages
+                    WHERE chat_id = ? AND round_number BETWEEN ? AND ? AND archived = 0
+                    ORDER BY created_at ASC
+                ''', (chat_id, round_start, round_end))
+                rows = cursor.fetchall()
+
+                from database.models import ChatMessage
+                messages = []
+                for row in rows:
+                    msg = ChatMessage(
+                        id=row[0], chat_id=row[1], role=row[2], content=row[3],
+                        round_number=row[4], is_summary=bool(row[5]),
+                        archived=bool(row[6]), created_at=row[8]
+                    )
+                    messages.append(msg)
+                return messages
+        except Exception as e:
+            print(f"Get messages by rounds error: {e}")
+            return []
+
+    def archive_chat_messages(self, chat_id: str, round_start: int, round_end: int) -> bool:
+        """归档指定轮次的消息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE chat_messages
+                    SET archived = 1
+                    WHERE chat_id = ? AND round_number BETWEEN ? AND ?
+                ''', (chat_id, round_start, round_end))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Archive messages error: {e}")
+            return False

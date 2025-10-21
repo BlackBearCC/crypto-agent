@@ -37,7 +37,6 @@ def main():
         print(f"  名称: {status['config']['name']}")
         print(f"  版本: {status['config']['version']}")
         print(f"  运行模式: {status['config']['mode']}")
-        print(f"  分析师: {', '.join(status['analysts'])}")
         print(f"  LLM客户端: {', '.join(status['llm_clients'])}")
         
         # 启动监控

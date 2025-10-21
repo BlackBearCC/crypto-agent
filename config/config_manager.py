@@ -21,15 +21,14 @@ class ConfigManager:
     def __init__(self, config_path: Optional[str] = None):
         """
         初始化配置管理器
-        
+
         Args:
             config_path: 配置文件路径，如果为None则使用默认路径
         """
         if config_path is None:
-            # 默认配置文件路径
-            current_dir = Path(__file__).parent.parent.parent
+            current_dir = Path(__file__).parent
             config_path = current_dir / "crypto_monitor_config.yaml"
-        
+
         self.config_path = Path(config_path)
         self._settings: Optional[Settings] = None
     

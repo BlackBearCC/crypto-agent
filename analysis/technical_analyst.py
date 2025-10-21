@@ -312,19 +312,19 @@ class TechnicalAnalyst(BaseAnalyst):
             # 需要获取真实的K线数据进行分析
             # 这里应该通过某种方式获取数据，暂时返回说明
             # 为了避免循环依赖，直接在这里获取基本分析
-            
+
             # 获取币种的基本信息和简单分析
-            from ..data.binance_client import BinanceClient
-            from ..config import Settings, ConfigManager
-            
+            from data.binance_client import BinanceClient
+            from config import Settings, ConfigManager
+
             # 创建临时的数据获取客户端
             config_manager = ConfigManager()
             settings = config_manager.get_settings()
-            
+
             try:
                 binance_client = BinanceClient(settings)
                 kline_data = binance_client.get_kline_data(symbol, '15m', 50)
-                
+
                 if kline_data:
                     # 调用完整的分析方法
                     return self.analyze_kline_data(symbol, kline_data)

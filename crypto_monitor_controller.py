@@ -53,6 +53,9 @@ class CryptoMonitorController:
         # 交易员自动交易配置
         self.auto_trading_enabled = False  # 默认关闭自动交易
 
+        # 系统运行状态
+        self.is_running = False
+
         print("🎉 系统初始化完成！")
     
     def _initialize_core_components(self, config_path: Optional[str]):
@@ -90,34 +93,33 @@ class CryptoMonitorController:
     
     def _initialize_services(self):
         """初始化服务层"""
-        # 数据服务
         self.data_service = DataService(self.settings, self.db_manager)
-        print("✅ 数据服务初始化完成")
-        
-        # 分析服务
+        print("Data service initialized")
+
         self.analysis_service = AnalysisService(
             self.settings, self.db_manager, self.data_service.data_collector, self.llm_clients
         )
-        print("✅ 分析服务初始化完成")
-        
-        # 格式化服务
+        print("Analysis service initialized")
+
         self.formatting_service = FormattingService(self.settings)
-        print("✅ 格式化服务初始化完成")
-        
-        # 智能主脑（需要访问Controller来调用其他功能）
-        self.master_brain = MasterBrain(self)
-        print("✅ 智能主脑初始化完成")
-        
-        # 监控服务（需要主脑实例）
+        print("Formatting service initialized")
+
+        chief_llm = self._get_llm_client_for_analyst('首席分析师')
+        from core import SessionManager
+        self.session_manager = SessionManager(chief_llm, self.db_manager)
+        print("Session manager initialized")
+
+        self.master_brain = MasterBrain(self, self.session_manager)
+        print("Master brain initialized")
+
         self.monitoring_service = MonitoringService(
             self.settings, self.db_manager, self.data_service,
             self.indicator_calculator, self.master_brain
         )
-        print("✅ 监控服务初始化完成")
+        print("Monitoring service initialized")
 
-        # 定时任务调度服务
         self.scheduler_service = SchedulerService(self.settings)
-        print("✅ 定时任务调度服务初始化完成")
+        print("Scheduler service initialized")
     
     def _setup_service_coordination(self):
         """设置服务间的协调关系"""
@@ -305,15 +307,17 @@ class CryptoMonitorController:
     
     def start_monitoring(self):
         """启动监控系统"""
+        self.is_running = True
         success = self.monitoring_service.start_monitoring()
         if success:
             self._start_telegram_bot()
 
         # 启动定时任务调度器
         self.scheduler_service.start_scheduler()
-    
+
     def stop_monitoring(self):
         """停止监控系统"""
+        self.is_running = False
         self.monitoring_service.stop_monitoring()
         # 注释掉自动停止Telegram机器人，让其保持运行
         # self._stop_telegram_bot()
@@ -764,28 +768,29 @@ class CryptoMonitorController:
 
     # ============= 智能主脑接口 =============
     
-    def process_user_message(self, message: str, source: str = "direct") -> str:
+    def process_user_message(self, message: str, chat_id: str = "default", source: str = "direct") -> str:
         """
         处理用户消息 - 智能主脑接口
-        
+
         Args:
             message: 用户消息
+            chat_id: 聊天ID
             source: 消息来源
-            
+
         Returns:
             str: 主脑的智能响应
         """
         try:
-            print(f"🧠 主脑开始处理用户消息: {message}")
+            print(f"Master brain processing user message: {message}")
             context = {
                 'source': source,
                 'message_type': 'user_request'
             }
-            response = self.master_brain.process_request(message, context)
-            print(f"🧠 主脑处理完成，响应长度: {len(response)} 字符")
+            response = self.master_brain.process_request(message, chat_id, context)
+            print(f"Master brain completed, response length: {len(response)} chars")
             return response
         except Exception as e:
-            error_msg = f"❌ 处理用户消息失败: {e}"
+            error_msg = f"User message processing failed: {e}"
             print(error_msg)
             import traceback
             traceback.print_exc()

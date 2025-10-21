@@ -26,21 +26,16 @@ except ImportError:
     class InlineKeyboardMarkup: pass
     class InlineKeyboardButton: pass
 
-# 优先使用crypto_monitor_project，兼容crypto_bot
-try:
-    from crypto_monitor_project.crypto_monitor_controller import CryptoMonitorController as Crypto24hMonitor
-    CRYPTO_BOT_TYPE = 'crypto_monitor_project'
-except ImportError:
-    try:
-        from crypto_bot import Crypto24hMonitor
-        CRYPTO_BOT_TYPE = 'crypto_bot'
-    except ImportError:
-        print("无法导入加密货币监控系统")
-        Crypto24hMonitor = None
-        CRYPTO_BOT_TYPE = None
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from crypto_monitor_controller import CryptoMonitorController
+
+# Telegram bot类型标识
+CRYPTO_BOT_TYPE = 'crypto_monitor_project'
 
 class CryptoTelegramBot:
-    def __init__(self, token: str, chat_id: str, crypto_monitor: Crypto24hMonitor):
+    def __init__(self, token: str, chat_id: str, crypto_monitor):
         if not TELEGRAM_AVAILABLE:
             raise ImportError("需要安装python-telegram-bot库")
             
@@ -349,55 +344,51 @@ class CryptoTelegramBot:
         """处理普通消息 - 支持直接消息转发给agent"""
         text = update.message.text.strip()
         user_name = update.message.from_user.first_name if update.message.from_user else "用户"
+        chat_id = str(update.message.chat_id)
 
-        print(f"📱 Telegram收到消息: {text} (来自: {user_name})")
+        print(f"Telegram received message: {text} (from: {user_name}, chat_id: {chat_id})")
 
-        # 如果是crypto_monitor_project，支持直接消息处理
         if CRYPTO_BOT_TYPE == 'crypto_monitor_project' and hasattr(self.crypto_monitor, 'process_user_message'):
             try:
-                await update.message.reply_text("🤖 正在处理您的消息...")
+                await update.message.reply_text("Processing your message...")
 
-                # 调用crypto_monitor_project的智能消息处理 (同步调用)
-                response = self.crypto_monitor.process_user_message(text, source="telegram")
+                response = self.crypto_monitor.process_user_message(text, chat_id=chat_id, source="telegram")
 
-                # 直接发送回复 (简化异步处理)
                 if response:
-                    await self._send_long_message(update, f"🧠 **智能助手回复：**\n\n{response}")
+                    await self._send_long_message(update, f"**AI Response:**\n\n{response}")
                 else:
-                    await update.message.reply_text("❌ 未收到回复，请重试")
+                    await update.message.reply_text("No response received, please try again")
                 return
 
             except Exception as e:
-                error_msg = f"❌ 消息处理失败: {e}"
-                print(f"❌ Telegram消息处理错误: {e}")
+                error_msg = f"Message processing failed: {e}"
+                print(f"Telegram message processing error: {e}")
                 import traceback
                 traceback.print_exc()
-                # 发送错误消息
                 try:
                     await update.message.reply_text(error_msg)
                 except:
-                    print("❌ 无法发送错误消息，可能是网络连接问题")
+                    print("Cannot send error message, possible network issue")
 
-        # 简单的自然语言处理（兼容模式）
         if any(word in text.lower() for word in ['分析', 'analyze', '报告', 'report']):
             reply_markup = self._create_main_menu()
             try:
                 await update.message.reply_text(
-                    "💡 **快捷操作**\n点击下方按钮快速访问功能：",
+                    "**Quick Actions**\nClick buttons below for quick access:",
                     parse_mode='Markdown',
                     reply_markup=reply_markup
                 )
             except:
-                print("❌ 发送快捷操作消息失败")
+                print("Failed to send quick action message")
         else:
             reply_markup = self._create_main_menu()
             try:
                 await update.message.reply_text(
-                    "🤖 我是加密货币监控助手！\n✨ **智能对话模式**：直接发送消息给我，我会智能处理\n📊 **快捷功能**：点击下方按钮快速访问：",
+                    "I am crypto monitoring assistant!\n**Smart conversation mode**: Send me messages directly, I will process intelligently\n**Quick functions**: Click buttons below for quick access:",
                     reply_markup=reply_markup
                 )
             except:
-                print("❌ 发送欢迎消息失败")
+                print("Failed to send welcome message")
 
     def setup_handlers(self):
         """设置命令处理器"""
@@ -577,19 +568,19 @@ class CryptoTelegramBot:
         print("⏹️ Telegram机器人已停止")
 
 # 在crypto_bot.py中集成的函数
-def start_telegram_bot_thread(crypto_monitor: Crypto24hMonitor, token: str, chat_id: str):
+def start_telegram_bot_thread(crypto_monitor, token: str, chat_id: str):
     """在独立线程中启动Telegram机器人"""
     if not TELEGRAM_AVAILABLE:
         print("❌ 无法启动Telegram机器人：缺少python-telegram-bot库")
         return None
-    
+
     def run_bot():
         try:
             bot = CryptoTelegramBot(token, chat_id, crypto_monitor)
             asyncio.run(bot.start_bot())
         except Exception as e:
             print(f"❌ Telegram机器人线程异常: {e}")
-    
+
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     return bot_thread

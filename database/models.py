@@ -46,3 +46,16 @@ class TriggerEvent:
     timestamp: Optional[datetime] = None
     data: Optional[str] = None
     status: str = "pending"
+
+
+@dataclass
+class ChatMessage:
+    """聊天消息模型"""
+    id: Optional[int] = None
+    chat_id: str = ""
+    role: str = ""
+    content: str = ""
+    round_number: int = 0
+    is_summary: bool = False
+    archived: bool = False
+    created_at: Optional[datetime] = None

@@ -8,5 +8,6 @@ from core.rsi import RSI
 from core.macd import MACD
 from core.moving_average import MovingAverage
 from core.master_brain import MasterBrain
+from core.session_manager import SessionManager
 
-__all__ = ['IndicatorCalculator', 'RSI', 'MACD', 'MovingAverage', 'MasterBrain']
+__all__ = ['IndicatorCalculator', 'RSI', 'MACD', 'MovingAverage', 'MasterBrain', 'SessionManager']

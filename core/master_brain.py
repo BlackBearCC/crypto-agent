@@ -16,22 +16,23 @@ from analysis import PromptManager
 
 class MasterBrain:
     """智能交易主脑 - 通过LLM和function calling协调所有能力"""
-    
-    def __init__(self, controller_instance):
+
+    def __init__(self, controller_instance, session_manager=None):
         """
         初始化主脑
-        
+
         Args:
             controller_instance: CryptoMonitorController实例，用于访问所有组件
+            session_manager: 会话管理器，用于多轮对话
         """
         self.controller = controller_instance
         self.settings = controller_instance.settings
         self.prompt_manager = PromptManager()
-        
-        # 获取主脑使用的LLM客户端（使用首席分析师的配置）
+        self.session_manager = session_manager
+
         self.llm_client = controller_instance._get_llm_client_for_analyst('首席分析师')
-        
-        print("🧠 智能交易主脑初始化完成")
+
+        print("智能交易主脑初始化完成")
     
     def get_master_brain_prompt(self) -> str:
         """获取主脑提示词 - 待机模式"""
@@ -106,31 +107,34 @@ class MasterBrain:
 
 现在系统处于待机状态，等待用户通过Telegram发送指令。"""
 
-    def process_request(self, request: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def process_request(self, request: str, chat_id: str = "default", context: Optional[Dict[str, Any]] = None) -> str:
         """
         处理用户请求或心跳事件
 
         Args:
             request: 用户请求或系统事件描述
+            chat_id: 聊天ID，用于多轮对话
             context: 附加上下文信息
 
         Returns:
             主脑的响应和处理结果
         """
         try:
-            # 准备上下文信息
             context_info = self._prepare_context(context or {})
 
-            # 准备function definitions
             functions = self._get_function_definitions()
 
-            # 调用LLM with function calling - 分离系统提示词和用户消息
-            response = self._call_llm_with_functions(request, context_info, functions)
+            response = self._call_llm_with_functions(request, chat_id, context_info, functions)
+
+            if self.session_manager:
+                self.session_manager.add_message(chat_id, 'user', request)
+                self.session_manager.add_message(chat_id, 'assistant', response)
+                self.session_manager.check_and_compress(chat_id)
 
             return response
 
         except Exception as e:
-            error_msg = f"❌ 主脑处理请求失败: {e}"
+            error_msg = f"Master brain request processing failed: {e}"
             print(error_msg)
             return error_msg
     
@@ -241,11 +245,12 @@ class MasterBrain:
             },
             {
                 "name": "get_market_data",
-                "description": "获取实时市场数据",
+                "description": "获取实时市场数据（价格、RSI、MACD等）",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "symbols": {"type": "array", "items": {"type": "string"}, "description": "交易对列表"}
+                        "symbol": {"type": "string", "description": "交易对，如BTCUSDT（单个）"},
+                        "symbols": {"type": "array", "items": {"type": "string"}, "description": "交易对列表（多个）"}
                     }
                 }
             },
@@ -350,14 +355,13 @@ class MasterBrain:
             }
         ]
     
-    def _call_llm_with_functions(self, user_request: str, context_info: str, functions: List[Dict[str, Any]]) -> str:
-        """调用LLM with function calling - 分离系统提示词和用户消息"""
+    def _call_llm_with_functions(self, user_request: str, chat_id: str, context_info: str, functions: List[Dict[str, Any]]) -> str:
+        """调用LLM with function calling - 支持多轮对话"""
         if not self.llm_client:
-            print("❌ 主脑: LLM客户端未初始化")
-            return "❌ LLM客户端未初始化"
+            print("Master brain: LLM client not initialized")
+            return "LLM client not initialized"
 
         try:
-            # 构造系统提示词（包含主脑能力说明和function列表）
             function_list = "\n".join([f"- {f['name']}: {f['description']}" for f in functions])
             system_prompt = f"""{self.get_master_brain_prompt()}
 
@@ -369,7 +373,6 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
 
 注意：字符串参数要用引号，数组参数用方括号。"""
 
-            # 构造用户消息（包含上下文和请求）
             user_message = f"""## 当前上下文
 {context_info}
 
@@ -378,48 +381,67 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
 
 请智能分析并执行相应操作。"""
 
-            print(f"🧠 主脑准备调用LLM")
-            print(f"  - 系统提示词长度: {len(system_prompt)} 字符")
-            print(f"  - 用户消息长度: {len(user_message)} 字符")
+            history = []
+            if self.session_manager:
+                history = self.session_manager.get_history(chat_id, limit=10)
 
-            # 使用分离的system_prompt和user_message调用LLM
+            if history:
+                print(f"Master brain using conversation history: {len(history)} messages")
+
+            print(f"Master brain calling LLM")
+            print(f"  - System prompt length: {len(system_prompt)} chars")
+            print(f"  - User message length: {len(user_message)} chars")
+            print(f"  - History messages: {len(history)}")
+
             response = self.llm_client.call(
                 system_prompt_or_full_prompt=system_prompt,
                 user_message=user_message,
                 agent_name='智能主脑'
             )
-            print(f"🧠 LLM原始响应长度: {len(response)} 字符")
+            print(f"LLM raw response length: {len(response)} chars")
 
-            # 解析是否包含function call
             processed_response = self._process_function_calls(response)
-            print(f"🧠 处理后响应长度: {len(processed_response)} 字符")
+            print(f"Processed response length: {len(processed_response)} chars")
 
             return processed_response
 
         except Exception as e:
-            return f"❌ LLM调用失败: {e}"
+            return f"LLM call failed: {e}"
     
     def _process_function_calls(self, response: str) -> str:
         """处理响应中的function calls - 简化版本"""
         lines = response.split('\n')
         processed_lines = []
-        
+
         for line in lines:
             if line.strip().startswith('FUNCTION_CALL:'):
-                # 解析并执行function call
                 try:
                     func_call = line.replace('FUNCTION_CALL:', '').strip()
+
+                    # 控制台输出调用日志
+                    print(f"[Master Brain] Executing: {func_call}")
+
                     result = self._execute_function_call(func_call)
-                    processed_lines.append(f"📞 执行: {func_call}")
-                    processed_lines.append(f"📋 结果: {result}")
+
+                    # 控制台输出结果
+                    print(f"[Master Brain] Result: {result[:200]}..." if len(result) > 200 else f"[Master Brain] Result: {result}")
+
+                    # 不再添加调用信息到返回给用户的响应中
+                    # 只添加结果（如果需要的话可以格式化）
+                    if result and not result.startswith('❌'):
+                        processed_lines.append(result)
+                    elif result.startswith('❌'):
+                        processed_lines.append(result)
+
                 except Exception as e:
                     import traceback
                     error_detail = traceback.format_exc()
-                    processed_lines.append(f"❌ 函数调用失败: {e}")
-                    processed_lines.append(f"详细错误: {error_detail}")
+                    print(f"[Master Brain] Error: {e}")
+                    print(f"[Master Brain] Traceback: {error_detail}")
+                    processed_lines.append(f"❌ 执行失败: {e}")
             else:
                 processed_lines.append(line)
-        
+
         return '\n'.join(processed_lines)
     
     def _execute_function_call(self, func_call: str) -> str:
@@ -509,7 +531,42 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
 
             elif 'get_symbol_monitors_status(' in func_call:
                 return json.dumps(self.controller.get_symbol_monitors_status(), ensure_ascii=False, indent=2)
-            
+
+            elif 'get_market_data(' in func_call:
+                symbol = self._extract_param(func_call, 'symbol')
+                symbols = self._extract_param(func_call, 'symbols')
+
+                # 支持单个symbol或symbols数组
+                symbol_list = []
+                if symbol:
+                    symbol_list = [symbol]
+                elif symbols:
+                    if isinstance(symbols, list):
+                        symbol_list = symbols
+                    elif isinstance(symbols, str):
+                        symbol_list = [symbols]
+
+                if not symbol_list:
+                    return "❌ 缺少symbol或symbols参数"
+
+                results = []
+                for sym in symbol_list:
+                    kline_data = self.controller.data_service.collect_kline_data(sym)
+                    if kline_data:
+                        latest = kline_data[-1] if isinstance(kline_data, list) else kline_data
+                        results.append({
+                            'symbol': sym,
+                            'price': latest.get('close'),
+                            'rsi': latest.get('rsi'),
+                            'macd': latest.get('macd'),
+                            'volume': latest.get('volume'),
+                            'timestamp': latest.get('timestamp')
+                        })
+                    else:
+                        results.append({'symbol': sym, 'error': '无法获取数据'})
+
+                return json.dumps(results, ensure_ascii=False, indent=2)
+
             else:
                 return f"❌ 未知的函数调用: {func_call}"
                 
