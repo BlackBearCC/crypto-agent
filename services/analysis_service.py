@@ -11,6 +11,7 @@ from config import Settings
 from analysis import TechnicalAnalyst, MarketAnalyst, FundamentalAnalyst, ChiefAnalyst, PromptManager
 from database import DatabaseManager, AnalysisRecord
 from data import DataCollector
+from services.analysis_context import AnalysisContext
 
 
 class AnalysisService:
@@ -117,20 +118,23 @@ class AnalysisService:
     
     def conduct_independent_coin_analysis(self, symbol: str) -> Dict[str, Any]:
         """
-        独立币种分析 - 协调所有分析师对单个币种进行分析
-        
+        独立币种分析 - 协调所有分析师对单个币种进行分析（使用统一Context）
+
         Args:
             symbol: 币种符号
-            
+
         Returns:
             Dict: 币种分析结果
         """
         newly_generated = set()
-        
+
         print(f"🏛️ 启动币种分析: {symbol}")
         print("="*80)
-        
-        # 1. 宏观分析
+
+        # 1. 准备分析上下文 - 一次性收集所有数据
+        context = self._prepare_analysis_context(symbol)
+
+        # 2. 宏观分析
         print("🌍 [宏观分析师] 分析全球市场环境...")
         macro_analysis = self.get_today_analysis('macro_analysis', '宏观分析师')
         if macro_analysis is None:
@@ -138,52 +142,50 @@ class AnalysisService:
             macro_analysis = self.analyze_macro_data()
             newly_generated.add('macro_analysis')
             self._save_analysis_record('宏观分析师', None, macro_analysis, '宏观数据分析')
-        
-        # 2. 市场情绪分析
+        context.macro_analysis_result = macro_analysis
+
+        # 3. 市场情绪分析
         print("🔥 [市场分析师] 分析市场情绪...")
         sentiment_analysis = self.get_today_analysis('market_sentiment', '市场分析师')
         if sentiment_analysis is None:
             print("🔄 生成新的市场情绪分析...")
-            sentiment_analysis = self.market_analyst.analyze_market_sentiment(
-                self.data_collector.collect_global_market_data(),
-                self.data_collector.collect_trending_data()
-            )
+            sentiment_analysis = self.market_analyst.analyze(context)
             newly_generated.add('market_sentiment')
             self._save_analysis_record('市场分析师', None, sentiment_analysis, '市场情绪分析')
-        
-        # 3. 技术分析
+        context.sentiment_analysis = sentiment_analysis
+
+        # 4. 技术分析
         print(f"📈 [技术分析师] 分析 {symbol}...")
-        kline_data = self.data_collector.collect_kline_data([symbol]).get(symbol, [])
-        if not kline_data:
+        if not context.has_kline_data():
             raise Exception(f"无法获取{symbol}的K线数据")
-        
-        technical_analysis = self.technical_analyst.analyze_kline_data(symbol, kline_data)
+
+        technical_analysis = self.technical_analyst.analyze(context)
+        context.technical_analysis = technical_analysis
         self._save_analysis_record('技术分析师', symbol, technical_analysis, f'{symbol}技术分析')
         newly_generated.add(f'technical_analysis_{symbol}')
-        
-        # 4. 基本面分析
+
+        # 5. 基本面分析
         print(f"📊 [基本面分析师] 分析 {symbol}...")
         fundamental_analysis = self.get_today_analysis(f'fundamental_analysis_{symbol}', '基本面分析师')
         if fundamental_analysis is None:
             print(f"🔄 生成新的{symbol}基本面分析...")
-            fundamental_analysis = self.fundamental_analyst.analyze_fundamental_data(symbol, self.data_collector)
+            fundamental_analysis = self.fundamental_analyst.analyze(context)
             newly_generated.add(f'fundamental_analysis_{symbol}')
             self._save_analysis_record('基本面分析师', symbol, fundamental_analysis, f'{symbol}基本面分析')
-        
-        # 5. 首席分析师整合
+        context.fundamental_analysis_result = fundamental_analysis
+
+        # 6. 首席分析师整合
         print(f"🎯 [{symbol}首席分析师] 整合分析...")
         dependencies_updated = any(dep in newly_generated for dep in [
-            'macro_analysis', 'market_sentiment', 
+            'macro_analysis', 'market_sentiment',
             f'technical_analysis_{symbol}', f'fundamental_analysis_{symbol}'
         ])
-        
+
         coin_chief_analysis = self.get_today_analysis(f'coin_chief_analysis_{symbol}', f'{symbol}首席分析师')
         if coin_chief_analysis is None or dependencies_updated:
-            coin_chief_analysis = self.chief_analyst.generate_comprehensive_analysis(
-                symbol, technical_analysis, sentiment_analysis, fundamental_analysis, macro_analysis
-            )
+            coin_chief_analysis = self.chief_analyst.analyze(context)
             self._save_analysis_record(f'{symbol}首席分析师', symbol, coin_chief_analysis, f'{symbol}首席分析')
-        
+
         return {
             'symbol': symbol,
             'macro_analysis': macro_analysis,
@@ -192,6 +194,32 @@ class AnalysisService:
             'fundamental_analysis': fundamental_analysis,
             'chief_analysis': coin_chief_analysis,
         }
+
+    def _prepare_analysis_context(self, symbol: str) -> AnalysisContext:
+        """
+        准备分析上下文 - 一次性收集所有分析所需数据
+
+        Args:
+            symbol: 目标币种
+
+        Returns:
+            AnalysisContext: 完整的分析上下文
+        """
+        context = AnalysisContext(target_symbol=symbol)
+
+        print("📊 收集市场数据...")
+        context.global_market_data = self.data_collector.collect_global_market_data()
+        context.fear_greed_index = self.data_collector.collect_fear_greed_index()
+        context.trending_coins = self.data_collector.collect_trending_data()
+        context.major_coins_performance = self.data_collector.collect_major_coins_performance()
+
+        print("📈 收集K线数据...")
+        context.kline_data = self.data_collector.collect_kline_data([symbol])
+
+        print("🌍 收集宏观数据...")
+        context.macro_data = self.data_collector.collect_comprehensive_macro_data()
+
+        return context
     
     def analyze_macro_data(self) -> str:
         """宏观分析 - 分离系统提示词与实时数据"""

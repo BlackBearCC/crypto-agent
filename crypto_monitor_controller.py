@@ -157,9 +157,19 @@ class CryptoMonitorController:
         """执行市场情绪分析任务"""
         try:
             print("🔥 执行市场情绪分析...")
-            global_data = self.data_service.collect_global_market_data() or {}
-            trending_data = self.data_service.collect_trending_data() or []
-            sentiment_analysis = self.analysis_service.market_analyst.analyze_market_sentiment(global_data, trending_data)
+
+            # 创建临时context用于市场分析（无特定币种）
+            from services.analysis_context import AnalysisContext
+            context = AnalysisContext(target_symbol="MARKET")
+
+            # 收集市场数据
+            context.global_market_data = self.data_service.collect_global_market_data() or {}
+            context.trending_coins = self.data_service.collect_trending_data() or []
+            context.fear_greed_index = self.data_service.data_collector.collect_fear_greed_index()
+            context.major_coins_performance = self.data_service.data_collector.collect_major_coins_performance()
+
+            # 使用新的统一接口
+            sentiment_analysis = self.analysis_service.market_analyst.analyze(context)
             self.analysis_service._save_analysis_record('市场分析师', None, sentiment_analysis, '定时市场情绪分析')
             print("✅ 市场情绪分析完成")
         except Exception as e:
@@ -179,9 +189,13 @@ class CryptoMonitorController:
                 for symbol in primary_symbols:
                     try:
                         print(f"  - 分析 {symbol} 基本面...")
-                        fundamental_analysis = self.analysis_service.fundamental_analyst.analyze_fundamental_data(
-                            symbol, self.data_service.data_collector
-                        )
+
+                        # 创建context
+                        from services.analysis_context import AnalysisContext
+                        context = AnalysisContext(target_symbol=symbol)
+
+                        # 使用新的统一接口
+                        fundamental_analysis = self.analysis_service.fundamental_analyst.analyze(context)
                         self.analysis_service._save_analysis_record(
                             '基本面分析师', symbol, fundamental_analysis, f'定时{symbol}基本面分析'
                         )
@@ -411,32 +425,48 @@ class CryptoMonitorController:
     def analyze_kline_data(self, symbol: str) -> str:
         """
         技术分析K线数据
-        
+
         Args:
             symbol: 币种符号
-            
+
         Returns:
             str: 技术分析结果
         """
         try:
             normalized_symbol = self.data_service.normalize_symbol(symbol)
-            return self.analysis_service.technical_analyst.analyze_crypto_technical(normalized_symbol)
+
+            # 创建context
+            from services.analysis_context import AnalysisContext
+            context = AnalysisContext(target_symbol=normalized_symbol)
+
+            # 收集K线数据
+            context.kline_data = self.data_service.data_collector.collect_kline_data([normalized_symbol])
+
+            # 使用新的统一接口
+            return self.analysis_service.technical_analyst.analyze(context)
         except Exception as e:
             return f"❌ 技术分析失败: {e}"
-    
+
     def analyze_market_sentiment(self) -> str:
         """
         市场情绪分析
-        
+
         Returns:
             str: 市场情绪分析结果
         """
         try:
-            # 获取市场数据
-            global_data = self.data_service.collect_global_market_data() or {}
-            trending_data = self.data_service.collect_trending_data() or []
-            
-            return self.analysis_service.market_analyst.analyze_market_sentiment(global_data, trending_data)
+            # 创建context
+            from services.analysis_context import AnalysisContext
+            context = AnalysisContext(target_symbol="MARKET")
+
+            # 收集市场数据
+            context.global_market_data = self.data_service.collect_global_market_data() or {}
+            context.trending_coins = self.data_service.collect_trending_data() or []
+            context.fear_greed_index = self.data_service.data_collector.collect_fear_greed_index()
+            context.major_coins_performance = self.data_service.data_collector.collect_major_coins_performance()
+
+            # 使用新的统一接口
+            return self.analysis_service.market_analyst.analyze(context)
         except Exception as e:
             return f"❌ 市场情绪分析失败: {e}"
     
