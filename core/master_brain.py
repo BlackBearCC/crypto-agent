@@ -105,6 +105,39 @@ class MasterBrain:
 - 然后调用相应的function
 - 最后总结结果并给出建议
 
+## Function Call严格规范
+
+⚠️ 当需要调用函数时，必须严格遵循以下格式：
+
+**基本格式**：
+```
+FUNCTION_CALL: function_name(param1="value1", param2="value2")
+```
+
+**严格要求**：
+1. 函数名必须完全匹配定义（区分大小写，不要添加或删除字符）
+2. 参数名必须完全匹配定义
+3. 字符串参数必须用双引号包裹
+4. 数组参数格式：["item1", "item2"]（方括号+双引号）
+5. 币种符号必须大写且以USDT结尾（如BTCUSDT而非btcusdt或BTC）
+6. 不要在function call前后添加任何解释文字
+7. 一次只调用一个函数
+8. 不要猜测参数格式，按照定义的pattern严格执行
+
+**错误示例**：
+❌ get_market_data(symbol=BTCUSDT) - 缺少引号
+❌ get_market_data(symbol="btcusdt") - 未大写
+❌ get_market_data(symbol="BTC") - 缺少USDT后缀
+❌ GetMarketData(symbol="BTCUSDT") - 函数名大小写错误
+❌ get_market_data(symbols="BTCUSDT") - 单个symbol应用symbol参数
+❌ get_market_data(symbol=["BTCUSDT"]) - 单个不应用数组
+
+**正确示例**：
+✅ get_market_data(symbol="BTCUSDT")
+✅ get_market_data(symbols=["BTCUSDT", "ETHUSDT"])
+✅ manual_trigger_analysis(symbol="BTCUSDT")
+✅ set_monitoring_symbols(primary_symbols=["BTCUSDT", "ETHUSDT"])
+
 现在系统处于待机状态，等待用户通过Telegram发送指令。"""
 
     def process_request(self, request: str, chat_id: str = "default", context: Optional[Dict[str, Any]] = None) -> str:
@@ -245,40 +278,62 @@ class MasterBrain:
             },
             {
                 "name": "get_market_data",
-                "description": "获取实时市场数据（价格、RSI、MACD等）",
+                "description": "获取实时市场数据（价格、RSI、MACD等指标）",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "symbol": {"type": "string", "description": "交易对，如BTCUSDT（单个）"},
-                        "symbols": {"type": "array", "items": {"type": "string"}, "description": "交易对列表（多个）"}
-                    }
+                        "symbol": {
+                            "type": "string",
+                            "description": "单个交易对符号，必须大写且以USDT结尾。示例: 'BTCUSDT', 'ETHUSDT'",
+                            "pattern": "^[A-Z]+USDT$"
+                        },
+                        "symbols": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[A-Z]+USDT$"
+                            },
+                            "description": "多个交易对列表，每个必须大写且以USDT结尾。示例: ['BTCUSDT', 'ETHUSDT']"
+                        }
+                    },
+                    "oneOf": [
+                        {"required": ["symbol"]},
+                        {"required": ["symbols"]}
+                    ]
                 }
             },
             {
-                "name": "manual_trigger_analysis", 
-                "description": "手动触发特定币种的完整分析",
+                "name": "manual_trigger_analysis",
+                "description": "手动触发特定币种的完整分析（包括技术面、基本面、市场情绪）",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "symbol": {"type": "string", "description": "交易对，如BTCUSDT"}
+                        "symbol": {
+                            "type": "string",
+                            "description": "交易对符号，必须大写且以USDT结尾。示例: 'BTCUSDT'",
+                            "pattern": "^[A-Z]+USDT$"
+                        }
                     },
                     "required": ["symbol"]
                 }
             },
             {
                 "name": "send_telegram_notification",
-                "description": "发送Telegram通知",
+                "description": "发送Telegram通知消息给用户",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "message": {"type": "string", "description": "通知消息内容"}
+                        "message": {
+                            "type": "string",
+                            "description": "通知消息内容，支持Markdown格式"
+                        }
                     },
                     "required": ["message"]
                 }
             },
             {
                 "name": "get_system_status",
-                "description": "获取系统运行状态",
+                "description": "获取系统运行状态信息（监控币种、运行模式等）",
                 "parameters": {"type": "object", "properties": {}}
             },
             {
@@ -288,14 +343,20 @@ class MasterBrain:
                     "type": "object",
                     "properties": {
                         "primary_symbols": {
-                            "type": "array", 
-                            "items": {"type": "string"}, 
-                            "description": "主要监控币种列表，如[\"BTCUSDT\", \"ETHUSDT\"]"
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[A-Z]+USDT$"
+                            },
+                            "description": "主要监控币种列表，每个必须大写且以USDT结尾。示例: ['BTCUSDT', 'ETHUSDT']"
                         },
                         "secondary_symbols": {
-                            "type": "array", 
-                            "items": {"type": "string"}, 
-                            "description": "次要监控币种列表，如[\"SOLUSDT\"]"
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[A-Z]+USDT$"
+                            },
+                            "description": "次要监控币种列表（可选），格式同主要币种。示例: ['SOLUSDT', 'DOGEUSDT']"
                         }
                     },
                     "required": ["primary_symbols"]
@@ -536,24 +597,35 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
                 symbol = self._extract_param(func_call, 'symbol')
                 symbols = self._extract_param(func_call, 'symbols')
 
-                # 支持单个symbol或symbols数组
+                # 验证和规范化symbol格式
                 symbol_list = []
                 if symbol:
+                    if not self._validate_symbol(symbol):
+                        return f"❌ 币种格式错误: {symbol}（必须大写且以USDT结尾，如BTCUSDT）"
                     symbol_list = [symbol]
                 elif symbols:
                     if isinstance(symbols, list):
+                        for s in symbols:
+                            if not self._validate_symbol(s):
+                                return f"❌ 币种格式错误: {s}（必须大写且以USDT结尾）"
                         symbol_list = symbols
                     elif isinstance(symbols, str):
+                        if not self._validate_symbol(symbols):
+                            return f"❌ 币种格式错误: {symbols}（必须大写且以USDT结尾）"
                         symbol_list = [symbols]
 
                 if not symbol_list:
                     return "❌ 缺少symbol或symbols参数"
 
+                # 修复：传递列表给collect_kline_data
+                kline_data_dict = self.controller.data_service.collect_kline_data(symbol_list)
+
                 results = []
                 for sym in symbol_list:
-                    kline_data = self.controller.data_service.collect_kline_data(sym)
-                    if kline_data:
-                        latest = kline_data[-1] if isinstance(kline_data, list) else kline_data
+                    # 修复：从字典中获取该symbol的数据
+                    sym_kline_data = kline_data_dict.get(sym, [])
+                    if sym_kline_data and len(sym_kline_data) > 0:
+                        latest = sym_kline_data[-1]
                         results.append({
                             'symbol': sym,
                             'price': latest.get('close'),
@@ -607,6 +679,26 @@ FUNCTION_CALL: function_name(param1=value1, param2=value2)
         except Exception as e:
             print(f"⚠️ 参数提取失败 {param_name}: {e}")
             return None
+
+    def _validate_symbol(self, symbol: str) -> bool:
+        """
+        验证币种符号格式
+
+        Args:
+            symbol: 币种符号
+
+        Returns:
+            bool: 是否有效
+        """
+        if not symbol or not isinstance(symbol, str):
+            return False
+        if not symbol.isupper():
+            return False
+        if not symbol.endswith('USDT'):
+            return False
+        if len(symbol) < 5:  # 至少xUSDT (5个字符)
+            return False
+        return True
     
     def _json_serializer(self, obj):
         """自定义JSON序列化器 - 处理不可序列化的类型"""
